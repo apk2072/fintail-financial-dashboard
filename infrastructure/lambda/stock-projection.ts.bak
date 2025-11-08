@@ -1,0 +1,477 @@
+import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+
+const dynamoClient = new DynamoDBClient({});
+const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const bedrockClient = new BedrockRuntimeClient({ region: 'us-west-2' });
+
+const TABLE_NAME = process.env.TABLE_NAME!;
+const BEDROCK_MODEL_ID = 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+const YAHOO_FINANCE_BASE_URL = 'https://query1.finance.yahoo.com/v8/finance';
+
+interface QuarterlyData {
+  quarter: string;
+  reportDate: string;
+  totalRevenue: number;
+  netIncome: number;
+  eps: number;
+  operatingIncome: number;
+  freeCashFlow: number;
+}
+
+interface PriceProjection {
+  targetPrice: number;
+  percentageChange: number;
+  range: {
+    low: number;
+    high: number;
+  };
+}
+
+interface ProjectionData {
+  ticker: string;
+  currentPrice: number;
+  priceChange?: number;
+  priceChangePercent?: number;
+  projections: {
+    threeMonth: PriceProjection;
+    sixMonth: PriceProjection;
+    twelveMonth: PriceProjection;
+  };
+  analysis: {
+    summary: string;
+    keyDrivers: string[];
+    risks: string[];
+    confidence: 'High' | 'Medium' | 'Low';
+  };
+  generatedAt: string;
+  dataAsOf: string;
+}
+
+interface StockPriceData {
+  currentPrice: number;
+  previousClose: number;
+  change: number;
+  changePercent: number;
+}
+
+export const handler = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'OPTIONS,GET',
+  };
+
+  try {
+    // Handle OPTIONS request for CORS
+    if (event.httpMethod === 'OPTIONS') {
+      return {
+        statusCode: 200,
+        headers,
+        body: '',
+      };
+    }
+
+    const ticker = event.pathParameters?.ticker?.toUpperCase();
+    
+    if (!ticker) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: 'Ticker symbol is required',
+          timestamp: new Date().toISOString(),
+        }),
+      };
+    }
+
+    console.log(`Generating projection for ${ticker}`);
+
+    // Check cache first
+    const cachedProjection = await getCachedProjection(ticker);
+    if (cachedProjection) {
+      console.log(`Cache hit for ${ticker}, updating current price`);
+      
+      // Always fetch real-time current price and change data from Yahoo Finance
+      const priceData = await getStockPriceData(ticker);
+      if (priceData) {
+        // Update the cached projection with real-time price and change data
+        cachedProjection.currentPrice = priceData.currentPrice;
+        cachedProjection.priceChange = priceData.change;
+        cachedProjection.priceChangePercent = priceData.changePercent;
+        
+        // Recalculate percentage changes with new current price
+        cachedProjection.projections.threeMonth.percentageChange = 
+          ((cachedProjection.projections.threeMonth.targetPrice - priceData.currentPrice) / priceData.currentPrice) * 100;
+        cachedProjection.projections.sixMonth.percentageChange = 
+          ((cachedProjection.projections.sixMonth.targetPrice - priceData.currentPrice) / priceData.currentPrice) * 100;
+        cachedProjection.projections.twelveMonth.percentageChange = 
+          ((cachedProjection.projections.twelveMonth.targetPrice - priceData.currentPrice) / priceData.currentPrice) * 100;
+      }
+      
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          data: cachedProjection,
+          cached: true,
+          timestamp: new Date().toISOString(),
+        }),
+      };
+    }
+
+    console.log(`Cache miss for ${ticker}, generating new projection`);
+
+    // Fetch company data and quarterly financials
+    const companyData = await getCompanyData(ticker);
+    if (!companyData) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: `Company ${ticker} not found`,
+          timestamp: new Date().toISOString(),
+        }),
+      };
+    }
+
+    const quarterlyData = await getQuarterlyData(ticker);
+    if (quarterlyData.length < 4) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: 'Insufficient quarterly data for projection (minimum 4 quarters required)',
+          timestamp: new Date().toISOString(),
+        }),
+      };
+    }
+
+    // Generate projection using Bedrock
+    const projection = await generateProjection(
+      ticker,
+      companyData.name,
+      companyData.marketCap,
+      quarterlyData
+    );
+
+    // Cache the projection
+    await cacheProjection(ticker, projection);
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        success: true,
+        data: projection,
+        cached: false,
+        timestamp: new Date().toISOString(),
+      }),
+    };
+  } catch (error) {
+    console.error('Error generating projection:', error);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({
+        success: false,
+        error: 'Failed to generate stock projection',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      }),
+    };
+  }
+};
+
+async function getCachedProjection(ticker: string): Promise<ProjectionData | null> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const result = await docClient.send(new GetCommand({
+      TableName: TABLE_NAME,
+      Key: {
+        PK: `PROJECTION#${ticker}`,
+        SK: today,
+      },
+    }));
+
+    if (result.Item && result.Item.projectionData) {
+      return result.Item.projectionData as ProjectionData;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error fetching cached projection:', error);
+    return null;
+  }
+}
+
+async function getCompanyData(ticker: string) {
+  try {
+    const result = await docClient.send(new GetCommand({
+      TableName: TABLE_NAME,
+      Key: {
+        PK: `COMPANY#${ticker}`,
+        SK: 'METADATA',
+      },
+    }));
+
+    return result.Item;
+  } catch (error) {
+    console.error(`Error fetching company data for ${ticker}:`, error);
+    return null;
+  }
+}
+
+async function getQuarterlyData(ticker: string): Promise<QuarterlyData[]> {
+  try {
+    const result = await docClient.send(new QueryCommand({
+      TableName: TABLE_NAME,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `COMPANY#${ticker}`,
+        ':sk': 'QUARTER#',
+      },
+      ScanIndexForward: false, // Most recent first
+      Limit: 8, // Get last 8 quarters
+    }));
+
+    return (result.Items || []) as QuarterlyData[];
+  } catch (error) {
+    console.error(`Error fetching quarterly data for ${ticker}:`, error);
+    return [];
+  }
+}
+
+async function getCurrentStockPrice(ticker: string): Promise<number | null> {
+  try {
+    console.log(`Fetching current price for ${ticker} from Yahoo Finance...`);
+    const url = `${YAHOO_FINANCE_BASE_URL}/chart/${ticker}?interval=1d&range=1d`;
+    
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`Yahoo Finance API returned ${response.status}`);
+      return null;
+    }
+
+    const data: any = await response.json();
+    const quote = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    
+    if (quote && typeof quote === 'number') {
+      console.log(`Current price for ${ticker}: $${quote.toFixed(2)}`);
+      return quote;
+    }
+
+    console.error('Unable to extract price from Yahoo Finance response');
+    return null;
+  } catch (error) {
+    console.error(`Error fetching current price from Yahoo Finance:`, error);
+    return null;
+  }
+}
+
+async function generateProjection(
+  ticker: string,
+  companyName: string,
+  marketCap: number,
+  quarterlyData: QuarterlyData[]
+): Promise<ProjectionData> {
+  // Try to get current price from Yahoo Finance first
+  let currentPrice = await getCurrentStockPrice(ticker);
+  
+  // Fallback: Calculate from market cap if Yahoo Finance fails
+  if (!currentPrice) {
+    console.log(`Falling back to market cap calculation for ${ticker}`);
+    const sharesOutstandingMap: Record<string, number> = {
+      'META': 2580000000,
+      'AAPL': 15440000000,
+      'GOOGL': 12440000000,
+      'AMZN': 10470000000,
+      'MSFT': 7430000000,
+    };
+    
+    const sharesOutstanding = sharesOutstandingMap[ticker] || 10000000000;
+    currentPrice = marketCap / sharesOutstanding;
+  }
+
+  // Format quarterly data for Claude
+  const formattedData = quarterlyData.map(q => ({
+    quarter: q.quarter,
+    date: q.reportDate,
+    revenue: `$${(q.totalRevenue / 1e9).toFixed(2)}B`,
+    netIncome: `$${(q.netIncome / 1e9).toFixed(2)}B`,
+    eps: `$${q.eps.toFixed(2)}`,
+    operatingIncome: `$${(q.operatingIncome / 1e9).toFixed(2)}B`,
+    freeCashFlow: `$${(q.freeCashFlow / 1e9).toFixed(2)}B`,
+  }));
+
+  const prompt = `You are a financial analyst. Analyze the following quarterly financial data for ${companyName} (${ticker}) and provide stock price projections.
+
+Historical Quarterly Data (most recent first):
+${JSON.stringify(formattedData, null, 2)}
+
+Current Market Cap: $${(marketCap / 1e9).toFixed(2)}B
+Estimated Current Stock Price: $${currentPrice.toFixed(2)}
+
+Provide a detailed analysis with:
+1. Price targets for 3, 6, and 12 months with realistic ranges (low/high)
+2. Key growth drivers (3-5 specific factors)
+3. Risk factors (3-5 specific concerns)
+4. Confidence level (High/Medium/Low) based on data quality and trend consistency
+5. Brief analysis summary (2-3 sentences)
+
+Format your response as JSON matching this exact structure:
+{
+  "threeMonth": {
+    "targetPrice": number,
+    "low": number,
+    "high": number
+  },
+  "sixMonth": {
+    "targetPrice": number,
+    "low": number,
+    "high": number
+  },
+  "twelveMonth": {
+    "targetPrice": number,
+    "low": number,
+    "high": number
+  },
+  "summary": "string",
+  "keyDrivers": ["string", "string", "string"],
+  "risks": ["string", "string", "string"],
+  "confidence": "High" | "Medium" | "Low"
+}
+
+Respond ONLY with valid JSON, no additional text.`;
+
+  try {
+    const response = await invokeBedrockWithRetry(prompt);
+    const analysis = JSON.parse(response);
+
+    // Calculate percentage changes
+    const projectionData: ProjectionData = {
+      ticker,
+      currentPrice,
+      projections: {
+        threeMonth: {
+          targetPrice: analysis.threeMonth.targetPrice,
+          percentageChange: ((analysis.threeMonth.targetPrice - currentPrice) / currentPrice) * 100,
+          range: {
+            low: analysis.threeMonth.low,
+            high: analysis.threeMonth.high,
+          },
+        },
+        sixMonth: {
+          targetPrice: analysis.sixMonth.targetPrice,
+          percentageChange: ((analysis.sixMonth.targetPrice - currentPrice) / currentPrice) * 100,
+          range: {
+            low: analysis.sixMonth.low,
+            high: analysis.sixMonth.high,
+          },
+        },
+        twelveMonth: {
+          targetPrice: analysis.twelveMonth.targetPrice,
+          percentageChange: ((analysis.twelveMonth.targetPrice - currentPrice) / currentPrice) * 100,
+          range: {
+            low: analysis.twelveMonth.low,
+            high: analysis.twelveMonth.high,
+          },
+        },
+      },
+      analysis: {
+        summary: analysis.summary,
+        keyDrivers: analysis.keyDrivers,
+        risks: analysis.risks,
+        confidence: analysis.confidence,
+      },
+      generatedAt: new Date().toISOString(),
+      dataAsOf: quarterlyData[0]?.reportDate || new Date().toISOString(),
+    };
+
+    return projectionData;
+  } catch (error) {
+    console.error('Error generating projection with Bedrock:', error);
+    throw new Error('Failed to generate AI projection');
+  }
+}
+
+async function invokeBedrockWithRetry(prompt: string, maxRetries = 3): Promise<string> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const payload = {
+        anthropic_version: 'bedrock-2023-05-31',
+        max_tokens: 2000,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        temperature: 0.3,
+      };
+
+      const command = new InvokeModelCommand({
+        modelId: BEDROCK_MODEL_ID,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: JSON.stringify(payload),
+      });
+
+      const response = await bedrockClient.send(command);
+      const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+      
+      return responseBody.content[0].text;
+    } catch (error) {
+      console.error(`Bedrock API attempt ${attempt} failed:`, error);
+      
+      if (attempt === maxRetries) {
+        throw error;
+      }
+      
+      // Exponential backoff
+      const delay = Math.pow(2, attempt) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw new Error('Failed to invoke Bedrock after retries');
+}
+
+async function cacheProjection(ticker: string, projection: ProjectionData): Promise<void> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const ttl = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours from now
+
+    await docClient.send(new PutCommand({
+      TableName: TABLE_NAME,
+      Item: {
+        PK: `PROJECTION#${ticker}`,
+        SK: today,
+        projectionData: projection,
+        ttl,
+        createdAt: new Date().toISOString(),
+      },
+    }));
+
+    console.log(`Cached projection for ${ticker}`);
+  } catch (error) {
+    console.error('Error caching projection:', error);
+    // Don't throw - caching failure shouldn't break the response
+  }
+}

@@ -1,0 +1,45 @@
+import { z } from 'zod';
+export declare const QuarterlyFinancialsSchema: z.ZodObject<{
+    quarter: z.ZodString;
+    reportDate: z.ZodString;
+    netSales: z.ZodNumber;
+    totalRevenue: z.ZodNumber;
+    netIncome: z.ZodNumber;
+    eps: z.ZodNumber;
+    operatingIncome: z.ZodNumber;
+    freeCashFlow: z.ZodNumber;
+    totalAssets: z.ZodOptional<z.ZodNumber>;
+    totalDebt: z.ZodOptional<z.ZodNumber>;
+    shareholderEquity: z.ZodOptional<z.ZodNumber>;
+    sharesOutstanding: z.ZodOptional<z.ZodNumber>;
+}, z.core.$strip>;
+export type QuarterlyFinancials = z.infer<typeof QuarterlyFinancialsSchema>;
+export declare const QuarterlyFinancialsRecordSchema: z.ZodObject<{
+    PK: z.ZodString;
+    SK: z.ZodString;
+    quarter: z.ZodString;
+    reportDate: z.ZodString;
+    netSales: z.ZodNumber;
+    totalRevenue: z.ZodNumber;
+    netIncome: z.ZodNumber;
+    eps: z.ZodNumber;
+    operatingIncome: z.ZodNumber;
+    freeCashFlow: z.ZodNumber;
+    totalAssets: z.ZodOptional<z.ZodNumber>;
+    totalDebt: z.ZodOptional<z.ZodNumber>;
+    shareholderEquity: z.ZodOptional<z.ZodNumber>;
+    sharesOutstanding: z.ZodOptional<z.ZodNumber>;
+}, z.core.$strip>;
+export type QuarterlyFinancialsRecord = z.infer<typeof QuarterlyFinancialsRecordSchema>;
+export declare const FinancialMetricsSchema: z.ZodObject<{
+    netSales: z.ZodNumber;
+    totalRevenue: z.ZodNumber;
+    netIncome: z.ZodNumber;
+    eps: z.ZodNumber;
+    operatingIncome: z.ZodNumber;
+    freeCashFlow: z.ZodNumber;
+    revenueGrowth: z.ZodOptional<z.ZodNumber>;
+    incomeGrowth: z.ZodOptional<z.ZodNumber>;
+    epsGrowth: z.ZodOptional<z.ZodNumber>;
+}, z.core.$strip>;
+export type FinancialMetrics = z.infer<typeof FinancialMetricsSchema>;

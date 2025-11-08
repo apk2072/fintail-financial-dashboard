@@ -1,0 +1,12 @@
+{
+  "FintailInfrastructureStack-development": {
+    "FintailApiEndpointB29B44F4": "https://9468zcsjg8.execute-api.us-east-1.amazonaws.com/prod/",
+    "ApiUrl": "https://9468zcsjg8.execute-api.us-east-1.amazonaws.com/prod/",
+    "DataSyncFunctionName": "FintailInfrastructureStac-DataSyncFunction2F1FA306-YserWsFylROY",
+    "WebsiteUrl": "https://dgoske3le3stp.cloudfront.net",
+    "CompanyTableName": "fintail-companies-development",
+    "S3BucketName": "fintail-website-096719769686-us-east-1",
+    "CompanyTableArn": "arn:aws:dynamodb:us-east-1:096719769686:table/fintail-companies-development",
+    "FinancialReportsBucketName": "fintail-financial-reports-096719769686"
+  }
+}

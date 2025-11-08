@@ -1,0 +1,202 @@
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { 
+  ChartBarIcon, 
+  ArrowTrendingUpIcon, 
+  BuildingOfficeIcon,
+  MagnifyingGlassIcon 
+} from '@heroicons/react/24/outline';
+import { apiClientInstance } from '../services/apiClient';
+import type { Company } from '../types';
+
+export const Dashboard: React.FC = () => {
+  const [featuredCompanies, setFeaturedCompanies] = useState<Company[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchCompanies = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const companies = await apiClientInstance.getCompanies({ limit: 8 });
+        console.log('Fetched companies:', companies);
+        setFeaturedCompanies(companies || []);
+      } catch (err: any) {
+        console.error('Error fetching companies:', err);
+        setError(err?.message || 'Failed to load companies. Using fallback data.');
+        // Set fallback data so the page doesn't break
+        setFeaturedCompanies([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCompanies();
+  }, []);
+
+  const formatMarketCap = (value: number | undefined) => {
+    if (value >= 1e12) return `$${(value / 1e12).toFixed(1)}T`;
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+    return `$${value.toLocaleString()}`;
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Hero Section */}
+      <div className="bg-gradient-to-r from-blue-600 to-purple-700 rounded-xl sm:rounded-2xl p-6 sm:p-8 mb-6 sm:mb-8 text-white">
+        <div className="max-w-3xl">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-3 sm:mb-4">
+            Welcome to Fintail Financial Dashboard
+          </h1>
+          <p className="text-base sm:text-lg lg:text-xl text-blue-100 mb-4 sm:mb-6">
+            Track quarterly financial highlights for popular public companies. 
+            Get insights into revenue, earnings, and market performance.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+            <Link
+              to="/companies"
+              className="bg-white text-blue-600 px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg font-medium hover:bg-blue-50 transition-colors text-center"
+            >
+              Browse Companies
+            </Link>
+            <Link
+              to="/search"
+              className="bg-blue-500 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg font-medium hover:bg-blue-400 transition-colors text-center"
+            >
+              Search Companies
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
+        <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-200">
+          <div className="flex items-center">
+            <div className="bg-blue-100 p-2.5 sm:p-3 rounded-lg">
+              <BuildingOfficeIcon className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600" />
+            </div>
+            <div className="ml-3 sm:ml-4">
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Total Companies</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900">500+</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-200">
+          <div className="flex items-center">
+            <div className="bg-green-100 p-2.5 sm:p-3 rounded-lg">
+              <ChartBarIcon className="h-5 w-5 sm:h-6 sm:w-6 text-green-600" />
+            </div>
+            <div className="ml-3 sm:ml-4">
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Quarterly Reports</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900">2,000+</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-200 sm:col-span-2 lg:col-span-1">
+          <div className="flex items-center">
+            <div className="bg-purple-100 p-2.5 sm:p-3 rounded-lg">
+              <ArrowTrendingUpIcon className="h-5 w-5 sm:h-6 sm:w-6 text-purple-600" />
+            </div>
+            <div className="ml-3 sm:ml-4">
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Data Sources</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900">3</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Featured Companies */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 mb-6 sm:mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2 sm:mb-0">Featured Companies</h2>
+          <Link
+            to="/companies"
+            className="text-blue-600 hover:text-blue-700 font-medium text-sm sm:text-base"
+          >
+            View All →
+          </Link>
+        </div>
+
+        {loading && (
+          <div className="text-center py-8">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <p className="mt-2 text-gray-600">Loading companies...</p>
+          </div>
+        )}
+
+        {error && (
+          <div className="text-center py-8 text-red-600">
+            <p>{error}</p>
+          </div>
+        )}
+
+        {!loading && !error && featuredCompanies.length === 0 && (
+          <div className="text-center py-8 text-gray-600">
+            <p>No companies available at the moment.</p>
+          </div>
+        )}
+
+        {!loading && !error && featuredCompanies.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            {featuredCompanies.map((company) => (
+              <Link
+                key={company.ticker}
+                to={`/company/${company.ticker}`}
+                className="block p-3 sm:p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-md transition-all"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-bold text-base sm:text-lg text-gray-900">{company.ticker}</span>
+                </div>
+                <h3 className="font-medium text-sm sm:text-base text-gray-900 mb-1 truncate">{company.name}</h3>
+                <p className="text-xs sm:text-sm text-gray-600 mb-2">{company.sector}</p>
+                <p className="text-xs sm:text-sm font-medium text-gray-900">
+                  {formatMarketCap(company.marketCap)}
+                </p>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Quick Actions */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+        <div className="bg-gradient-to-br from-green-50 to-blue-50 rounded-xl p-4 sm:p-6 border border-green-200">
+          <div className="flex items-center mb-3 sm:mb-4">
+            <MagnifyingGlassIcon className="h-6 w-6 sm:h-8 sm:w-8 text-green-600" />
+            <h3 className="text-lg sm:text-xl font-bold text-gray-900 ml-2 sm:ml-3">Search Companies</h3>
+          </div>
+          <p className="text-sm sm:text-base text-gray-600 mb-3 sm:mb-4">
+            Find companies by name, ticker symbol, or sector. Get instant access to their latest financial data.
+          </p>
+          <Link
+            to="/search"
+            className="inline-flex items-center text-green-600 hover:text-green-700 font-medium text-sm sm:text-base"
+          >
+            Start Searching →
+          </Link>
+        </div>
+
+        <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 sm:p-6 border border-purple-200">
+          <div className="flex items-center mb-3 sm:mb-4">
+            <ChartBarIcon className="h-6 w-6 sm:h-8 sm:w-8 text-purple-600" />
+            <h3 className="text-lg sm:text-xl font-bold text-gray-900 ml-2 sm:ml-3">Browse by Sector</h3>
+          </div>
+          <p className="text-sm sm:text-base text-gray-600 mb-3 sm:mb-4">
+            Explore companies organized by industry sectors. Compare performance within specific markets.
+          </p>
+          <Link
+            to="/companies"
+            className="inline-flex items-center text-purple-600 hover:text-purple-700 font-medium text-sm sm:text-base"
+          >
+            Browse Sectors →
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+};

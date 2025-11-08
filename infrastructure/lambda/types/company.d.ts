@@ -1,0 +1,34 @@
+import { z } from 'zod';
+export declare const CompanySchema: z.ZodObject<{
+    id: z.ZodString;
+    name: z.ZodString;
+    ticker: z.ZodString;
+    sector: z.ZodString;
+    industry: z.ZodOptional<z.ZodString>;
+    marketCap: z.ZodNumber;
+    employees: z.ZodOptional<z.ZodNumber>;
+    founded: z.ZodOptional<z.ZodNumber>;
+    headquarters: z.ZodOptional<z.ZodString>;
+    website: z.ZodOptional<z.ZodString>;
+    description: z.ZodOptional<z.ZodString>;
+    lastUpdated: z.ZodString;
+}, z.core.$strip>;
+export type Company = z.infer<typeof CompanySchema>;
+export declare const CompanyRecordSchema: z.ZodObject<{
+    PK: z.ZodString;
+    SK: z.ZodString;
+    name: z.ZodString;
+    ticker: z.ZodString;
+    sector: z.ZodString;
+    industry: z.ZodOptional<z.ZodString>;
+    marketCap: z.ZodNumber;
+    employees: z.ZodOptional<z.ZodNumber>;
+    founded: z.ZodOptional<z.ZodNumber>;
+    headquarters: z.ZodOptional<z.ZodString>;
+    website: z.ZodOptional<z.ZodString>;
+    description: z.ZodOptional<z.ZodString>;
+    lastUpdated: z.ZodString;
+    GSI1PK: z.ZodString;
+    GSI1SK: z.ZodString;
+}, z.core.$strip>;
+export type CompanyRecord = z.infer<typeof CompanyRecordSchema>;

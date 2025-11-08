@@ -1,0 +1,182 @@
+name: Deploy Fintail Financial Dashboard
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+env:
+  NODE_VERSION: '18'
+  AWS_REGION: 'us-east-1'
+
+jobs:
+  test:
+    name: Test and Build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run type check
+        run: npm run type-check
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Build application
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+          retention-days: 7
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install CDK dependencies
+        run: |
+          cd infrastructure
+          npm ci
+
+      - name: Deploy infrastructure
+        run: |
+          cd infrastructure
+          npx cdk deploy --context environment=staging --require-approval never
+
+      - name: Build and deploy frontend
+        run: |
+          npm run build
+          # Get S3 bucket name from CDK outputs
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name FintailInfrastructureStack-staging \
+            --query 'Stacks[0].Outputs[?OutputKey==`S3BucketName`].OutputValue' \
+            --output text)
+          
+          # Deploy to S3
+          aws s3 sync dist/ s3://$BUCKET_NAME --delete
+          
+          # Invalidate CloudFront cache
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name FintailInfrastructureStack-staging \
+            --query 'Stacks[0].Outputs[?OutputKey==`DistributionId`].OutputValue' \
+            --output text)
+          
+          if [ ! -z "$DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id $DISTRIBUTION_ID \
+              --paths "/*"
+          fi
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install CDK dependencies
+        run: |
+          cd infrastructure
+          npm ci
+
+      - name: Deploy infrastructure
+        run: |
+          cd infrastructure
+          npx cdk deploy --context environment=production --require-approval never
+
+      - name: Build and deploy frontend
+        run: |
+          npm run build
+          # Get S3 bucket name from CDK outputs
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name FintailInfrastructureStack-production \
+            --query 'Stacks[0].Outputs[?OutputKey==`S3BucketName`].OutputValue' \
+            --output text)
+          
+          # Deploy to S3
+          aws s3 sync dist/ s3://$BUCKET_NAME --delete
+          
+          # Invalidate CloudFront cache
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name FintailInfrastructureStack-production \
+            --query 'Stacks[0].Outputs[?OutputKey==`DistributionId`].OutputValue' \
+            --output text)
+          
+          if [ ! -z "$DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id $DISTRIBUTION_ID \
+              --paths "/*"
+          fi
+
+      - name: Run smoke tests
+        run: |
+          # Get website URL from CDK outputs
+          WEBSITE_URL=$(aws cloudformation describe-stacks \
+            --stack-name FintailInfrastructureStack-production \
+            --query 'Stacks[0].Outputs[?OutputKey==`WebsiteUrl`].OutputValue' \
+            --output text)
+          
+          # Simple smoke test
+          curl -f $WEBSITE_URL || exit 1
+          echo "Smoke test passed: $WEBSITE_URL is accessible"
