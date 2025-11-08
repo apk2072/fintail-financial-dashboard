@@ -86,6 +86,27 @@ npm run diff
 npm run destroy
 ```
 
+### Environment Variables
+
+For production deployments with custom domains, set these environment variables:
+
+```bash
+# ACM Certificate ARN (required for HTTPS)
+export ACM_CERTIFICATE_ARN="arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
+
+# CloudFront domain (from CDK outputs)
+export CLOUDFRONT_DOMAIN="xxxxx.cloudfront.net"
+
+# Route53 Hosted Zone ID
+export HOSTED_ZONE_ID="ZXXXXXXXXXXXXX"
+```
+
+Then run the domain setup script:
+
+```bash
+./infrastructure/scripts/setup-domain.sh
+```
+
 ## Technology Stack
 
 ### Frontend

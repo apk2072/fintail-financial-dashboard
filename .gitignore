@@ -58,3 +58,17 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+test-payload.json
+response.json
+
+# One-time scripts and temporary configuration files
+infrastructure/scripts/add-*.json
+infrastructure/scripts/check-*.sh
+infrastructure/scripts/check-*.js
+infrastructure/scripts/check-*.py
+infrastructure/scripts/fix-*.js
+infrastructure/scripts/update-*-metadata.js
+infrastructure/scripts/update-company-descriptions.js
+
+# CDK outputs (should be generated, not committed)
+infrastructure/outputs-*.json

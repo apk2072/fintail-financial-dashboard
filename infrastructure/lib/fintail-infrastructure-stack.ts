@@ -7,6 +7,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
@@ -293,8 +294,21 @@ export class FintailInfrastructureStack extends cdk.Stack {
       description: 'OAC for Fintail website',
     });
 
+    // Import ACM certificate for custom domain
+    // Certificate ARN should be provided via environment variable or context
+    const certificateArn = process.env.ACM_CERTIFICATE_ARN || this.node.tryGetContext('certificateArn');
+    const certificate = this.environmentName === 'production' && certificateArn
+      ? certificatemanager.Certificate.fromCertificateArn(
+          this,
+          'Certificate',
+          certificateArn
+        )
+      : undefined;
+
     // CloudFront distribution
     this.distribution = new cloudfront.Distribution(this, 'WebsiteDistribution', {
+      domainNames: this.environmentName === 'production' ? ['fintail.me', 'www.fintail.me'] : undefined,
+      certificate: certificate,
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(this.websiteBucket, {
           originAccessControl,
